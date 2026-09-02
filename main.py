@@ -3,10 +3,13 @@ import importlib
 # Importación dinámica para evitar errores del analizador cuando Streamlit
 # está instalado en un entorno virtual distinto al seleccionado por el IDE.
 st = importlib.import_module("streamlit")
-import os, re
+
+import streamlit as st
+import os
+import re
+import urllib.parse
 import base_datos
 import pdf_manager
-import urllib.parse
 
 # --- Configuración estética de la página web de KROMA3D ---
 st.set_page_config(page_title="KROMA3D - Cotizador Móvil", page_icon="📋", layout="centered")
@@ -39,11 +42,11 @@ with pestana_carga:
     domicilio = st.text_input("Domicilio Particular:").upper()
     dom_obra = st.text_input("Domicilio de la Instalación / Obra:").upper()
     
-    # Botón directo para Maps (📍 abre la ubicación al instante en el celular)
+    # 🌟 REPARADO: Buscador satelital blindado para navegadores móviles
     if dom_obra:
         texto_buscar = f"{dom_obra}, Mendoza, Argentina"
         enlace_maps = f"https://google.com{urllib.parse.quote(texto_buscar)}"
-        st.markdown(f"[📍 Ver ubicación en Google Maps]({enlace_maps})")
+        st.markdown(f"🔗 [📍 CLIC ACÁ PARA VER EN GOOGLE MAPS]({enlace_maps})")
 
     observaciones = st.text_area("Observaciones o Guía de Obra:").upper()
     st.markdown("---")
@@ -91,51 +94,70 @@ with pestana_carga:
             molduras_gratis = "Sí"
 
     st.markdown("---")
-    # Botón grande táctil para guardar e imprimir todo junto desde el celular
+    
+    # 🌟 REPARADO: Generación de PDF en memoria y botón de descarga táctil instantáneo
     if st.button("🚀 GENERAR Y GUARDAR COTIZACIÓN", use_container_width=True):
         if not cliente or not dni or not metros or not modelo:
             st.error("❌ Faltan datos esenciales: Completa el nombre, DNI, modelo y m².")
         else:
             try:
+                dni_limpio = re.sub(r'\D', '', dni)
+                tel_limpio = re.sub(r'\D', '', telefono)
+                
+                # Guarda el registro en SQLite
                 base_datos.calcular_e_insertar(
-                    cliente, re.sub(r'\D', '', dni), re.sub(r'\D', '', telefono), email, domicilio, dom_obra, "", metros, modelo, float(ancho), float(alto), destino, pintura, 
+                    cliente, dni_limpio, tel_limpio, email, domicilio, dom_obra, observaciones, metros, modelo, float(ancho), float(alto), destino, pintura, 
                     colocacion, float(mo_m2), float(ins_m2), flete, float(flete_monto), 
                     molduras, float(metros_lineales), molduras_gratis, float(descuento), inmediata
                 )
-                st.success("✅ ¡Presupuesto guardado y PDF enviado al secadero con éxito!")
+                
+                # Fuerza a ReportLab a dibujar el archivo en la nube
+                p_completo = base_datos.buscar_presupuesto_completo(cliente)
+                if p_completo:
+                    ruta_pdf = pdf_manager.generar_pdf_presupuesto(p_completo)
+                    st.success("✅ ¡Presupuesto guardado con éxito!")
+                    
+                    # Le ofrece el PDF directo en la pantalla del celular para descargar o enviar por WhatsApp
+                    if os.path.exists(ruta_pdf):
+                        with open(ruta_pdf, "rb") as file:
+                            st.download_button(
+                                label="📥 DESCARGAR ORDEN EN PDF (HACÉ CLIC ACÁ)",
+                                data=file,
+                                file_name=os.path.basename(ruta_pdf),
+                                mime="application/pdf",
+                                use_container_width=True
+                            )
             except Exception as e:
                 st.error(f"Ocurrió un detalle: {str(e)}")
 
 # =========================================================================
-# SOLAPA 2: HISTORIAL GENERAL DE VENTAS PARA CELULARES (Se despliega en pestana_historial)
+# SOLAPA 2: HISTORIAL GENERAL DE VENTAS PARA CELULARES
 # =========================================================================
 with pestana_historial:
     st.markdown("### 📊 Cuaderno de Ventas")
-    
-    # Buscador rápido tipo Google adaptado para el dedo
     criterio_busqueda = st.text_input("🔍 Buscar por Nombre o CUIT del Cliente:").upper()
     
     registros = base_datos.obtener_presupuestos()
-    # Ordena estrictamente del más nuevo al más viejo
-    registros_ordenados = sorted(registros, key=lambda x: x[0], reverse=True)
-    
-    for r in registros_ordenados:
-        id_p, cl_nom, m2, mod, total, sena, plazo, fecha = r
+    if registros:
+        registros_ordenados = sorted(registros, key=lambda x: x[0], reverse=True)
         
-        if criterio_busqueda and criterio_busqueda not in cl_nom:
-            continue
-            
-        # Dibuja tarjetas grandes comerciales ideales para pantallas táctiles
-        with st.expander(f"📦 OP N° {id_p} - {cl_nom} ({fecha})"):
-            st.markdown(f"**Material:** {m2} m² del modelo **{mod}**")
-            st.markdown(f"**Total Neto:** $ {total:,.2f} | **Seña 50%:** $ {sena:,.2f}")
-            st.markdown(f"**Plazo Otorgado:** {plazo}")
-            
-            # Enlace de descarga directa del remito membretado en el celular
-            fecha_l = fecha.replace("/", "-")
-            nom_l = cl_nom.replace(" ", "_")
-            ruta_pdf = f"presupuestos_emitidos/Presupuesto_{nom_l}_Nro_{id_p}_{fecha_l}.pdf"
-            
-            if os.path.exists(ruta_pdf):
-                with open(ruta_pdf, "rb") as file:
-                    st.download_button(label="📥 Descargar Orden en PDF", data=file, file_name=os.path.basename(ruta_pdf), mime="application/pdf", key=f"dl_{id_p}")
+        for r in registros_ordenados:
+            id_p, cl_nom, m2, mod, total, sena, plazo, fecha = r
+            if criterio_busqueda and criterio_busqueda not in cl_nom:
+                continue
+                
+            with st.expander(f"📦 OP N° {id_p} - {cl_nom} ({fecha})"):
+                st.markdown(f"**Material:** {m2} m² del modelo **{mod}**")
+                st.markdown(f"**Total Neto:** $ {total:,.2f} | **Seña 50%:** $ {sena:,.2f}")
+                st.markdown(f"**Plazo Otorgado:** {plazo}")
+                
+                # Botón de descarga histórico para PDFs viejos guardados en el servidor
+                fecha_l = fecha.replace("/", "-")
+                nom_l = cl_nom.replace(" ", "_")
+                ruta_p = f"presupuestos_emitidos/Presupuesto_{nom_l}_Nro_{id_p}_{fecha_l}.pdf"
+                
+                if os.path.exists(ruta_p):
+                    with open(ruta_p, "rb") as f_hist:
+                        st.download_button(label="📥 Descargar PDF", data=f_hist, file_name=os.path.basename(ruta_p), mime="application/pdf", key=f"dl_{id_p}")
+                else:
+                    st.caption("⚠️ Archivo físico no generado en la nube. Dale click a Generar arriba.")
